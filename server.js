@@ -3,15 +3,16 @@ const http = require("http");
 const path = require("path");
 const express = require("express");
 const nodemailer = require("nodemailer");
-const { WebSocketServer } = require("ws");
 
 const app = express();
-const server = http.createServer(app);
 
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+
+// broadcastToClients is a no-op in serverless (Vercel); replaced below when running locally
+let broadcastToClients = (_data) => {};
 
 // Configuration email
 let transporter = null;
@@ -133,46 +134,52 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-// WebSocket
-const wss = new WebSocketServer({ server });
+// WebSocket and periodic broadcast are only available outside serverless environments
+if (!process.env.VERCEL) {
+  const { WebSocketServer } = require("ws");
+  const server = http.createServer(app);
+  const wss = new WebSocketServer({ server });
 
-function broadcastToClients(data) {
-  const serialized = JSON.stringify(data);
-  for (const client of wss.clients) {
-    if (client.readyState === 1) {
-      client.send(serialized);
+  broadcastToClients = function (data) {
+    const serialized = JSON.stringify(data);
+    for (const client of wss.clients) {
+      if (client.readyState === 1) {
+        client.send(serialized);
+      }
     }
-  }
+  };
+
+  wss.on("connection", (socket) => {
+    console.log("✅ Client WebSocket connecté");
+    socket.send(
+      JSON.stringify({
+        type: "welcome",
+        payload: {
+          message: "Connexion WebSocket active.",
+          connectedAt: new Date().toISOString(),
+        },
+      })
+    );
+
+    socket.on("close", () => {
+      console.log("❌ Client WebSocket déconnecté");
+    });
+  });
+
+  // Diffusion status périodique
+  setInterval(() => {
+    broadcastToClients({
+      type: "site_status",
+      payload: {
+        text: "Équipe disponible pour vos chantiers cette semaine.",
+        updatedAt: new Date().toISOString(),
+      },
+    });
+  }, 20000);
+
+  server.listen(PORT, () => {
+    console.log(`\n✅ Serveur ma9onNova lancé sur http://localhost:${PORT}\n`);
+  });
 }
 
-wss.on("connection", (socket) => {
-  console.log("✅ Client WebSocket connecté");
-  socket.send(
-    JSON.stringify({
-      type: "welcome",
-      payload: {
-        message: "Connexion WebSocket active.",
-        connectedAt: new Date().toISOString(),
-      },
-    })
-  );
-
-  socket.on("close", () => {
-    console.log("❌ Client WebSocket déconnecté");
-  });
-});
-
-// Diffusion status périodique
-setInterval(() => {
-  broadcastToClients({
-    type: "site_status",
-    payload: {
-      text: "Équipe disponible pour vos chantiers cette semaine.",
-      updatedAt: new Date().toISOString(),
-    },
-  });
-}, 20000);
-
-server.listen(PORT, () => {
-  console.log(`\n✅ Serveur ma9onNova lancé sur http://localhost:${PORT}\n`);
-});
+module.exports = app;

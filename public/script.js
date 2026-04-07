@@ -13,12 +13,16 @@ if (emailJsConfig.enabled && window.emailjs?.init) {
   });
 }
 
+const WS_MAX_RETRIES = 5;
+let wsRetries = 0;
+
 function connectWebSocket() {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   const wsUrl = `${protocol}://${window.location.host}`;
   const socket = new WebSocket(wsUrl);
 
   socket.addEventListener("open", () => {
+    wsRetries = 0;
     wsStatusNode.textContent = "Connecté au flux chantier en direct.";
   });
 
@@ -41,8 +45,13 @@ function connectWebSocket() {
   });
 
   socket.addEventListener("close", () => {
-    wsStatusNode.textContent = "Connexion interrompue. Reconnexion...";
-    setTimeout(connectWebSocket, 3000);
+    wsRetries += 1;
+    if (wsRetries < WS_MAX_RETRIES) {
+      wsStatusNode.textContent = "Connexion interrompue. Reconnexion...";
+      setTimeout(connectWebSocket, 3000);
+    } else {
+      wsStatusNode.textContent = "";
+    }
   });
 }
 
